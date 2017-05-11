@@ -248,6 +248,7 @@ class Font2Font(object):
         summary_handle = SummaryHandle(d_merged=d_merged_summary,
                                        g_merged=g_merged_summary)
 
+
         # those operations will be shared, so we need
         # to make them visible globally
         setattr(self, "input_handle", input_handle)
