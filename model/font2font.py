@@ -399,7 +399,7 @@ class Font2Font(object):
             print("generated images saved at %s" % p)
 
         count = 0
-        threshold = 0.5
+        threshold = 0.1
         batch_buffer = list()
         for labels, source_imgs in source_iter:
             fake_imgs, real_imgs, d_loss, g_loss, l1_loss = self.generate_fake_samples(source_imgs, labels)
@@ -442,9 +442,6 @@ class Font2Font(object):
             merged_pair = np.concatenate([merged_real_images, merged_fake_images], axis=1)
 
             batch_buffer.append(merged_pair)
-            if len(batch_buffer) == 10:
-                save_imgs(batch_buffer, count, threshold)
-                batch_buffer = list()
             count += 1
         if batch_buffer:
             # last batch
