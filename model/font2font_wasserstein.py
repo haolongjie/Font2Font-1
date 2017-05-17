@@ -223,7 +223,7 @@ class Font2Font(object):
         g_loss_summary = tf.summary.scalar("g_loss", g_loss)
         tv_loss_summary = tf.summary.scalar("tv_loss", tv_loss)
 
-        d_merged_summary = tf.summary.merge([d_loss_summary, category_loss_summary, d_loss_summary])
+        d_merged_summary = tf.summary.merge([d_loss_summary, category_loss_summary])
         g_merged_summary = tf.summary.merge([cheat_loss_summary, l1_loss_summary,
                                              fake_category_loss_summary,
                                              const_loss_summary,
