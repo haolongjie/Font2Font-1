@@ -150,9 +150,8 @@ class Font2Font(object):
             fc2 = fc(tf.reshape(h3, [self.batch_size, -1]), self.embedding_num, scope="d_fc2")
 
             # Rule 1: remove the sigmoid function in the last layer of discriminator
-            return fc1, fc1, fc2
-
             # return tf.nn.sigmoid(fc1), fc1, fc2
+            return fc1, fc1, fc2
 
     def build_model(self, is_training=True, inst_norm=False):
         real_data = tf.placeholder(tf.float32,
@@ -192,10 +191,12 @@ class Font2Font(object):
         category_loss = (real_category_loss + fake_category_loss) / 2.0
 
         # binary real/fake loss
-        d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=real_D_logits,
-                                                                             labels=tf.ones_like(real_D)))
-        d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_D_logits,
-                                                                             labels=tf.zeros_like(fake_D)))
+        d_loss = tf.reduce_mean(real_D) - tf.reduce_mean(fake_D)
+
+        # d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=real_D_logits,
+        #                                                                      labels=tf.ones_like(real_D)))
+        # d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_D_logits,
+        #                                                                      labels=tf.zeros_like(fake_D)))
 
         # L1 loss between real and generated images
         l1_loss = self.L1_penalty * tf.reduce_mean(tf.abs(fake_B - real_B))
@@ -208,11 +209,11 @@ class Font2Font(object):
         cheat_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_D_logits,
                                                                             labels=tf.ones_like(fake_D)))
 
-        d_loss = d_loss_real + d_loss_fake + category_loss
+        d_loss = d_loss + category_loss
         g_loss = cheat_loss + l1_loss + fake_category_loss + const_loss
 
-        d_loss_real_summary = tf.summary.scalar("d_loss_real", d_loss_real)
-        d_loss_fake_summary = tf.summary.scalar("d_loss_fake", d_loss_fake)
+        # d_loss_real_summary = tf.summary.scalar("d_loss_real", d_loss_real)
+        # d_loss_fake_summary = tf.summary.scalar("d_loss_fake", d_loss_fake)
         category_loss_summary = tf.summary.scalar("category_loss", category_loss)
         cheat_loss_summary = tf.summary.scalar("cheat_loss", cheat_loss)
         l1_loss_summary = tf.summary.scalar("l1_loss", l1_loss)
@@ -222,8 +223,7 @@ class Font2Font(object):
         g_loss_summary = tf.summary.scalar("g_loss", g_loss)
         tv_loss_summary = tf.summary.scalar("tv_loss", tv_loss)
 
-        d_merged_summary = tf.summary.merge([d_loss_real_summary, d_loss_fake_summary,
-                                             category_loss_summary, d_loss_summary])
+        d_merged_summary = tf.summary.merge([d_loss_summary, category_loss_summary, d_loss_summary])
         g_merged_summary = tf.summary.merge([cheat_loss_summary, l1_loss_summary,
                                              fake_category_loss_summary,
                                              const_loss_summary,
@@ -561,28 +561,29 @@ class Font2Font(object):
             if (ei + 1) % schedule == 0:
                 update_lr = current_lr / 2.0
                 # minimum learning rate guarantee
-                update_lr = max(update_lr, 0.0002)
+                update_lr = max(update_lr, 0.000002)
                 print("decay learning rate from %.5f to %.5f" % (current_lr, update_lr))
                 current_lr = update_lr
 
             for bid, batch in enumerate(train_batch_iter):
                 counter += 1
                 labels, batch_images = batch
-                # Optimize D
-                _, batch_d_loss, d_summary = self.sess.run([d_optimizer, loss_handle.d_loss,
-                                                            summary_handle.d_merged],
-                                                           feed_dict={
-                                                               real_data: batch_images,
-                                                               embedding_ids: labels,
-                                                               learning_rate: current_lr
-                                                           })
+                # Optimize D  -- Train D more.
+                for _ in range(5):
+                    _, batch_d_loss, d_summary = self.sess.run([d_optimizer, loss_handle.d_loss,
+                                                                summary_handle.d_merged],
+                                                               feed_dict={
+                                                                   real_data: batch_images,
+                                                                   embedding_ids: labels,
+                                                                   learning_rate: current_lr
+                                                               })
                 # Optimize G
-                _, batch_g_loss = self.sess.run([g_optimizer, loss_handle.g_loss],
-                                                feed_dict={
-                                                    real_data: batch_images,
-                                                    embedding_ids: labels,
-                                                    learning_rate: current_lr
-                                                })
+                # _, batch_g_loss = self.sess.run([g_optimizer, loss_handle.g_loss],
+                #                                 feed_dict={
+                #                                     real_data: batch_images,
+                #                                     embedding_ids: labels,
+                #                                     learning_rate: current_lr
+                #                                 })
                 # magic move to Optimize G again
                 # according to https://github.com/carpedm20/DCGAN-tensorflow
                 # collect all the losses along the way

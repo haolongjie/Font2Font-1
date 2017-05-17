@@ -5,7 +5,7 @@ from __future__ import absolute_import
 import tensorflow as tf
 import argparse
 
-from model.font2font import Font2Font
+from model.font2font_wasserstein import Font2Font
 
 parser = argparse.ArgumentParser(description='Train')
 parser.add_argument('--experiment_dir', dest='experiment_dir', required=True,
@@ -22,7 +22,7 @@ parser.add_argument('--embedding_num', dest='embedding_num', type=int, default=4
 parser.add_argument('--embedding_dim', dest='embedding_dim', type=int, default=128, help="dimension for embedding")
 parser.add_argument('--epoch', dest='epoch', type=int, default=100, help='number of epoch')
 parser.add_argument('--batch_size', dest='batch_size', type=int, default=16, help='number of examples in batch')
-parser.add_argument('--lr', dest='lr', type=float, default=0.001, help='initial learning rate for adam')
+parser.add_argument('--lr', dest='lr', type=float, default=0.00005, help='initial learning rate for adam')
 parser.add_argument('--schedule', dest='schedule', type=int, default=10, help='number of epochs to half learning rate')
 parser.add_argument('--resume', dest='resume', type=int, default=1, help='resume from previous training')
 parser.add_argument('--freeze_encoder', dest='freeze_encoder', type=int, default=0,
