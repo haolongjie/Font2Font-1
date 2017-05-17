@@ -532,8 +532,8 @@ class Font2Font(object):
 
         learning_rate = tf.placeholder(tf.float32, name="learning_rate")
         # Rule 4: do not use the Adam Optimizer function. Use RMS or SGD
-        d_optimizer = tf.train.RMSPropOptimizer(learning_rate, beta1=0.5).minimize(loss_handle.d_loss, var_list=d_vars)
-        g_optimizer = tf.train.RMSPropOptimizer(learning_rate, beta1=0.5).minimize(loss_handle.g_loss, var_list=g_vars)
+        d_optimizer = tf.train.RMSPropOptimizer(learning_rate).minimize(loss_handle.d_loss, var_list=d_vars)
+        g_optimizer = tf.train.RMSPropOptimizer(learning_rate).minimize(loss_handle.g_loss, var_list=g_vars)
 
         tf.global_variables_initializer().run()
         real_data = input_handle.real_data
