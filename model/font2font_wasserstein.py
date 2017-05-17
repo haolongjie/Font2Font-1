@@ -15,7 +15,7 @@ from .utils import scale_back, merge, save_concat_images
 # Auxiliary wrapper classes
 # Used to save handles(important nodes in computation graph) for later evaluation
 LossHandle = namedtuple("LossHandle", ["d_loss", "g_loss", "const_loss", "l1_loss",
-                                       "category_loss", "cheat_loss", "tv_loss"])
+                                       "category_loss", "tv_loss"])
 InputHandle = namedtuple("InputHandle", ["real_data", "embedding_ids"])
 EvalHandle = namedtuple("EvalHandle", ["encoder", "generator", "target", "source", "embedding"])
 SummaryHandle = namedtuple("SummaryHandle", ["d_merged", "g_merged"])
@@ -586,11 +586,10 @@ class Font2Font(object):
                 # magic move to Optimize G again
                 # according to https://github.com/carpedm20/DCGAN-tensorflow
                 # collect all the losses along the way
-                _, batch_g_loss, category_loss, cheat_loss, \
+                _, batch_g_loss, category_loss, \
                 const_loss, l1_loss, tv_loss, g_summary = self.sess.run([g_optimizer,
                                                                          loss_handle.g_loss,
                                                                          loss_handle.category_loss,
-                                                                         loss_handle.cheat_loss,
                                                                          loss_handle.const_loss,
                                                                          loss_handle.l1_loss,
                                                                          loss_handle.tv_loss,
@@ -602,9 +601,9 @@ class Font2Font(object):
                                                                         })
                 passed = time.time() - start_time
                 log_format = "Epoch: [%2d], [%4d/%4d] time: %4.4f, d_loss: %.5f, g_loss: %.5f, " + \
-                             "category_loss: %.5f, cheat_loss: %.5f, const_loss: %.5f, l1_loss: %.5f, tv_loss: %.5f"
+                             "category_loss: %.5f,  const_loss: %.5f, l1_loss: %.5f, tv_loss: %.5f"
                 print(log_format % (ei, bid, total_batches, passed, batch_d_loss, batch_g_loss,
-                                    category_loss, cheat_loss, const_loss, l1_loss, tv_loss))
+                                    category_loss, const_loss, l1_loss, tv_loss))
                 summary_writer.add_summary(d_summary, counter)
                 summary_writer.add_summary(g_summary, counter)
 
