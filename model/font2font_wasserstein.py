@@ -150,8 +150,7 @@ class Font2Font(object):
             fc2 = fc(tf.reshape(h3, [self.batch_size, -1]), self.embedding_num, scope="d_fc2")
 
             # Rule 1: remove the sigmoid function in the last layer of discriminator
-            # return tf.nn.sigmoid(fc1), fc1, fc2
-            return fc1, fc1, fc2
+            return fc1, fc2
 
     def build_model(self, is_training=True, inst_norm=False):
         real_data = tf.placeholder(tf.float32,
@@ -172,8 +171,8 @@ class Font2Font(object):
 
         # Note it is not possible to set reuse flag back to False
         # initialize all variables before setting reuse to True
-        real_D, real_D_logits, real_category_logits = self.discriminator(real_AB, is_training=is_training, reuse=False)
-        fake_D, fake_D_logits, fake_category_logits = self.discriminator(fake_AB, is_training=is_training, reuse=True)
+        real_D_logits, real_category_logits = self.discriminator(real_AB, is_training=is_training, reuse=False)
+        fake_D_logits, fake_category_logits = self.discriminator(fake_AB, is_training=is_training, reuse=True)
 
         # encoding constant loss
         # this loss assume that generated imaged and real image
@@ -191,12 +190,8 @@ class Font2Font(object):
         category_loss = (real_category_loss + fake_category_loss) / 2.0
 
         # binary real/fake loss
-        d_loss = tf.reduce_mean(real_D) - tf.reduce_mean(fake_D)
-
-        # d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=real_D_logits,
-        #                                                                      labels=tf.ones_like(real_D)))
-        # d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_D_logits,
-        #                                                                      labels=tf.zeros_like(fake_D)))
+        d_loss_real = tf.reduce_mean(tf.scalar_mul(-1, real_D_logits))
+        d_loss_fake = tf.reduce_mean(fake_D_logits)
 
         # L1 loss between real and generated images
         l1_loss = self.L1_penalty * tf.reduce_mean(tf.abs(fake_B - real_B))
@@ -206,16 +201,12 @@ class Font2Font(object):
                    + tf.nn.l2_loss(fake_B[:, :, 1:, :] - fake_B[:, :, :width - 1, :]) / width) * self.Ltv_penalty
 
         # maximize the chance generator fool the discriminator
-        cheat_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_D_logits,
-                                                                            labels=tf.ones_like(fake_D)))
+        d_loss = d_loss_real + d_loss_fake + category_loss
+        g_loss = l1_loss + fake_category_loss + const_loss
 
-        d_loss = d_loss + category_loss
-        g_loss = cheat_loss + l1_loss + fake_category_loss + const_loss
-
-        # d_loss_real_summary = tf.summary.scalar("d_loss_real", d_loss_real)
-        # d_loss_fake_summary = tf.summary.scalar("d_loss_fake", d_loss_fake)
+        d_loss_real_summary = tf.summary.scalar("d_loss_real", d_loss_real)
+        d_loss_fake_summary = tf.summary.scalar("d_loss_fake", d_loss_fake)
         category_loss_summary = tf.summary.scalar("category_loss", category_loss)
-        cheat_loss_summary = tf.summary.scalar("cheat_loss", cheat_loss)
         l1_loss_summary = tf.summary.scalar("l1_loss", l1_loss)
         fake_category_loss_summary = tf.summary.scalar("fake_category_loss", fake_category_loss)
         const_loss_summary = tf.summary.scalar("const_loss", const_loss)
@@ -223,11 +214,16 @@ class Font2Font(object):
         g_loss_summary = tf.summary.scalar("g_loss", g_loss)
         tv_loss_summary = tf.summary.scalar("tv_loss", tv_loss)
 
-        d_merged_summary = tf.summary.merge([d_loss_summary, category_loss_summary])
-        g_merged_summary = tf.summary.merge([cheat_loss_summary, l1_loss_summary,
+        d_merged_summary = tf.summary.merge([d_loss_summary, category_loss_summary,
+                                             d_loss_real_summary, d_loss_fake_summary])
+        g_merged_summary = tf.summary.merge([l1_loss_summary,
                                              fake_category_loss_summary,
                                              const_loss_summary,
                                              g_loss_summary, tv_loss_summary])
+        # g_merged_summary = tf.summary.merge([cheat_loss_summary, l1_loss_summary,
+        #                                      fake_category_loss_summary,
+        #                                      const_loss_summary,
+        #                                      g_loss_summary, tv_loss_summary])
 
         # expose useful nodes in the graph as handles globally
         input_handle = InputHandle(real_data=real_data,
@@ -238,7 +234,6 @@ class Font2Font(object):
                                  const_loss=const_loss,
                                  l1_loss=l1_loss,
                                  category_loss=category_loss,
-                                 cheat_loss=cheat_loss,
                                  tv_loss=tv_loss)
 
         eval_handle = EvalHandle(encoder=encoded_real_B,
@@ -522,8 +517,8 @@ class Font2Font(object):
             op = tf.assign(var, val, validate_shape=False)
             self.sess.run(op)
 
-    def train(self, lr=0.0002, epoch=100, schedule=10, resume=True,
-              freeze_encoder=False, fine_tune=None, sample_steps=50, checkpoint_steps=500):
+    def train(self, lr=0.0002, epoch=100, schedule=10, resume=True, freeze_encoder=False, fine_tune=None,
+              sample_steps=50, checkpoint_steps=500, clamp=0.01):
         g_vars, d_vars = self.retrieve_trainable_vars(freeze_encoder=freeze_encoder)
         input_handle, loss_handle, _, summary_handle = self.retrieve_handles()
 
@@ -534,6 +529,8 @@ class Font2Font(object):
         # Rule 4: do not use the Adam Optimizer function. Use RMS or SGD
         d_optimizer = tf.train.RMSPropOptimizer(learning_rate).minimize(loss_handle.d_loss, var_list=d_vars)
         g_optimizer = tf.train.RMSPropOptimizer(learning_rate).minimize(loss_handle.g_loss, var_list=g_vars)
+        # Rule 2: Clip the weight of D: [-clamp, clamp]
+        cap_d_vars_ops = [val.assign(tf.clip_by_value(val, -clamp, clamp)) for val in d_vars]
 
         tf.global_variables_initializer().run()
         real_data = input_handle.real_data
@@ -568,8 +565,10 @@ class Font2Font(object):
             for bid, batch in enumerate(train_batch_iter):
                 counter += 1
                 labels, batch_images = batch
-                # Optimize D  -- Train D more.
+                # Rule 3: Optimize D  -- Train D more.
                 for _ in range(5):
+                    self.sess(cap_d_vars_ops)
+
                     _, batch_d_loss, d_summary = self.sess.run([d_optimizer, loss_handle.d_loss,
                                                                 summary_handle.d_merged],
                                                                feed_dict={
