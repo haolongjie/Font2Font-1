@@ -567,7 +567,7 @@ class Font2Font(object):
                 labels, batch_images = batch
                 # Rule 3: Optimize D  -- Train D more.
                 for _ in range(5):
-                    self.sess(cap_d_vars_ops)
+                    self.sess.run(cap_d_vars_ops)
 
                     _, batch_d_loss, d_summary = self.sess.run([d_optimizer, loss_handle.d_loss,
                                                                 summary_handle.d_merged],
