@@ -365,7 +365,7 @@ class Font2Font(object):
 
     def validate_model(self, val_iter, epoch, step):
         # labels, images = next(val_iter)
-        labels, images = val_iter
+        labels, images = val_iter.iteritems()
         fake_imgs, real_imgs, d_loss, g_loss, l1_loss = self.generate_fake_samples(images, labels)
         print("Sample: d_loss: %.5f, g_loss: %.5f, l1_loss: %.5f" % (d_loss, g_loss, l1_loss))
 
