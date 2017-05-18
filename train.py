@@ -5,7 +5,7 @@ from __future__ import absolute_import
 import tensorflow as tf
 import argparse
 
-from model.font2font_wasserstein import Font2Font
+from model.font2font_cgan import Font2Font
 
 parser = argparse.ArgumentParser(description='Train')
 parser.add_argument('--experiment_dir', dest='experiment_dir', required=True,

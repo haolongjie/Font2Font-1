@@ -16,7 +16,7 @@ from .utils import scale_back, merge, save_concat_images
 # Used to save handles(important nodes in computation graph) for later evaluation
 LossHandle = namedtuple("LossHandle", ["d_loss", "g_loss", "const_loss", "l1_loss",
                                        "category_loss", "cheat_loss", "tv_loss"])
-InputHandle = namedtuple("InputHandle", ["real_data", "embedding_ids"])
+InputHandle = namedtuple("InputHandle", ["real_data", "embedding_ids", "no_target_data", "no_target_ids"])
 EvalHandle = namedtuple("EvalHandle", ["encoder", "generator", "target", "source", "embedding"])
 SummaryHandle = namedtuple("SummaryHandle", ["d_merged", "g_merged"])
 
@@ -24,7 +24,7 @@ SummaryHandle = namedtuple("SummaryHandle", ["d_merged", "g_merged"])
 class Font2Font(object):
     def __init__(self, experiment_dir=None, experiment_id=0, batch_size=16, input_width=256, output_width=256,
                  generator_dim=64, discriminator_dim=64, L1_penalty=100, Lconst_penalty=15, Ltv_penalty=0.0,
-                 embedding_num=40, embedding_dim=128, input_filters=3, output_filters=3):
+                 Lcategory_penalty=1.0, embedding_num=40, embedding_dim=128, input_filters=3, output_filters=3):
         self.experiment_dir = experiment_dir
         self.experiment_id = experiment_id
         self.batch_size = batch_size
@@ -35,6 +35,7 @@ class Font2Font(object):
         self.L1_penalty = L1_penalty
         self.Lconst_penalty = Lconst_penalty
         self.Ltv_penalty = Ltv_penalty
+        self.Lcategory_penalty = Lcategory_penalty
         self.embedding_num = embedding_num
         self.embedding_dim = embedding_dim
         self.input_filters = input_filters
@@ -123,7 +124,6 @@ class Font2Font(object):
             d8 = decode_layer(d7, s, self.output_filters, layer=8, enc_layer=None, do_concat=False)
 
             output = tf.nn.tanh(d8)  # scale to (-1, 1)
-
             return output
 
     def generator(self, images, embeddings, embedding_ids, inst_norm, is_training, reuse=False):
@@ -152,19 +152,25 @@ class Font2Font(object):
 
             return tf.nn.sigmoid(fc1), fc1, fc2
 
-    def build_model(self, is_training=True, inst_norm=False):
+    def build_model(self, is_training=True, inst_norm=False, no_target_source=False):
         real_data = tf.placeholder(tf.float32,
                                    [self.batch_size, self.input_width, self.input_width,
                                     self.input_filters + self.output_filters],
                                    name='real_A_and_B_images')
         embedding_ids = tf.placeholder(tf.int64, shape=None, name="embedding_ids")
+        no_target_data = tf.placeholder(tf.float32,
+                                        [self.batch_size, self.input_width, self.input_width,
+                                         self.input_filters + self.output_filters],
+                                        name='no_target_A_and_B_images')
+        no_target_ids = tf.placeholder(tf.int64, shape=None, name="no_target_embedding_ids")
+
         # target images
         real_B = real_data[:, :, :, :self.input_filters]
         # source images
         real_A = real_data[:, :, :, self.input_filters:self.input_filters + self.output_filters]
 
         embedding = init_embedding(self.embedding_num, self.embedding_dim)
-        fake_B, encoded_real_B = self.generator(real_A, embedding, embedding_ids, is_training=is_training,
+        fake_B, encoded_real_A = self.generator(real_A, embedding, embedding_ids, is_training=is_training,
                                                 inst_norm=inst_norm)
         real_AB = tf.concat([real_A, real_B], 3)
         fake_AB = tf.concat([real_A, fake_B], 3)
@@ -178,7 +184,7 @@ class Font2Font(object):
         # this loss assume that generated imaged and real image
         # should reside in the same space and close to each other
         encoded_fake_B = self.encoder(fake_B, is_training, reuse=True)[0]
-        const_loss = tf.reduce_mean(tf.square(encoded_real_B - encoded_fake_B)) * self.Lconst_penalty
+        const_loss = (tf.reduce_mean(tf.square(encoded_real_A - encoded_fake_B))) * self.Lconst_penalty
 
         # category loss
         true_labels = tf.reshape(tf.one_hot(indices=embedding_ids, depth=self.embedding_num),
@@ -187,14 +193,13 @@ class Font2Font(object):
                                                                                     labels=true_labels))
         fake_category_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_category_logits,
                                                                                     labels=true_labels))
-        category_loss = (real_category_loss + fake_category_loss) / 2.0
+        category_loss = self.Lcategory_penalty * (real_category_loss + fake_category_loss)
 
         # binary real/fake loss
         d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=real_D_logits,
                                                                              labels=tf.ones_like(real_D)))
         d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_D_logits,
                                                                              labels=tf.zeros_like(fake_D)))
-
         # L1 loss between real and generated images
         l1_loss = self.L1_penalty * tf.reduce_mean(tf.abs(fake_B - real_B))
         # total variation loss
@@ -206,8 +211,40 @@ class Font2Font(object):
         cheat_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_D_logits,
                                                                             labels=tf.ones_like(fake_D)))
 
-        d_loss = d_loss_real + d_loss_fake + category_loss
-        g_loss = cheat_loss + l1_loss + fake_category_loss + const_loss
+        d_loss = d_loss_real + d_loss_fake + category_loss / 2.0
+        g_loss = cheat_loss + l1_loss + self.Lcategory_penalty * fake_category_loss + const_loss + tv_loss
+
+        if no_target_source:
+            # no_target source are examples that don't have the corresponding target images
+            # however, except L1 loss, we can compute category loss, binary loss and constant losses with those examples
+            # it is useful when discriminator get saturated and d_loss drops to near zero
+            # those data could be used as additional source of losses to break the saturation
+            no_target_A = no_target_data[:, :, :, self.input_filters:self.input_filters + self.output_filters]
+            no_target_B, encoded_no_target_A = self.generator(no_target_A, embedding, no_target_ids,
+                                                              is_training=is_training,
+                                                              inst_norm=inst_norm, reuse=True)
+            no_target_labels = tf.reshape(tf.one_hot(indices=no_target_ids, depth=self.embedding_num),
+                                          shape=[self.batch_size, self.embedding_num])
+            no_target_AB = tf.concat([no_target_A, no_target_B], 3)
+            no_target_D, no_target_D_logits, no_target_category_logits = self.discriminator(no_target_AB,
+                                                                                            is_training=is_training,
+                                                                                            reuse=True)
+            encoded_no_target_B = self.encoder(no_target_B, is_training, reuse=True)[0]
+            no_target_const_loss = tf.reduce_mean(
+                tf.square(encoded_no_target_A - encoded_no_target_B)) * self.Lconst_penalty
+            no_target_category_loss = tf.reduce_mean(
+                tf.nn.sigmoid_cross_entropy_with_logits(logits=no_target_category_logits,
+                                                        labels=no_target_labels)) * self.Lcategory_penalty
+
+            d_loss_no_target = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=no_target_D_logits,
+                                                                                      labels=tf.zeros_like(
+                                                                                          no_target_D)))
+            cheat_loss += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=no_target_D_logits,
+                                                                                 labels=tf.ones_like(no_target_D)))
+            d_loss = d_loss_real + d_loss_fake + d_loss_no_target + (category_loss + no_target_category_loss) / 3.0
+            g_loss = cheat_loss / 2.0 + l1_loss + \
+                     (self.Lcategory_penalty * fake_category_loss + no_target_category_loss) / 2.0 + \
+                     (const_loss + no_target_const_loss) / 2.0 + tv_loss
 
         d_loss_real_summary = tf.summary.scalar("d_loss_real", d_loss_real)
         d_loss_fake_summary = tf.summary.scalar("d_loss_fake", d_loss_fake)
@@ -229,7 +266,9 @@ class Font2Font(object):
 
         # expose useful nodes in the graph as handles globally
         input_handle = InputHandle(real_data=real_data,
-                                   embedding_ids=embedding_ids)
+                                   embedding_ids=embedding_ids,
+                                   no_target_data=no_target_data,
+                                   no_target_ids=no_target_ids)
 
         loss_handle = LossHandle(d_loss=d_loss,
                                  g_loss=g_loss,
@@ -239,7 +278,7 @@ class Font2Font(object):
                                  cheat_loss=cheat_loss,
                                  tv_loss=tv_loss)
 
-        eval_handle = EvalHandle(encoder=encoded_real_B,
+        eval_handle = EvalHandle(encoder=encoded_real_A,
                                  generator=fake_B,
                                  target=real_B,
                                  source=real_A,
@@ -318,12 +357,15 @@ class Font2Font(object):
                                                  loss_handle.l1_loss],
                                                 feed_dict={
                                                     input_handle.real_data: input_images,
-                                                    input_handle.embedding_ids: embedding_ids
+                                                    input_handle.embedding_ids: embedding_ids,
+                                                    input_handle.no_target_data: input_images,
+                                                    input_handle.no_target_ids: embedding_ids
                                                 })
         return fake_images, real_images, d_loss, g_loss, l1_loss
 
     def validate_model(self, val_iter, epoch, step):
-        labels, images = next(val_iter)
+        # labels, images = next(val_iter)
+        labels, images = val_iter
         fake_imgs, real_imgs, d_loss, g_loss, l1_loss = self.generate_fake_samples(images, labels)
         print("Sample: d_loss: %.5f, g_loss: %.5f, l1_loss: %.5f" % (d_loss, g_loss, l1_loss))
 
@@ -378,74 +420,6 @@ class Font2Font(object):
         if batch_buffer:
             # last batch
             save_imgs(batch_buffer, count)
-
-    def test(self, source_provider, embedding_ids, model_dir, save_dir):
-
-        source_len = len(source_provider.data.examples)
-
-        if isinstance(embedding_ids, int) or len(embedding_ids) == 1:
-            embedding_id = embedding_ids if isinstance(embedding_ids, int) else embedding_ids[0]
-            source_iter = source_provider.get_single_embedding_iter(source_len, embedding_id)
-        else:
-            source_iter = source_provider.get_random_embedding_iter(source_len, embedding_ids)
-
-        tf.global_variables_initializer().run()
-        saver = tf.train.Saver(var_list=self.retrieve_generator_vars())
-        self.restore_model(saver, model_dir)
-
-        def save_imgs(imgs, count, threshold):
-            p = os.path.join(save_dir, "inferred_%04d_%.2f.png" % (count, threshold))
-            save_concat_images(imgs, img_path=p)
-            print("generated images saved at %s" % p)
-
-        count = 0
-        threshold = 0.1
-        batch_buffer = list()
-        for labels, source_imgs in source_iter:
-            fake_imgs, real_imgs, d_loss, g_loss, l1_loss = self.generate_fake_samples(source_imgs, labels)
-
-            img_shape = fake_imgs.shape
-
-            fake_imgs_reshape = np.reshape(np.array(fake_imgs), [img_shape[0], img_shape[1]*img_shape[2]*img_shape[3]])
-            real_imgs_reshape = np.reshape(np.array(real_imgs), [img_shape[0], img_shape[1]*img_shape[2]*img_shape[3]])
-
-            # threshold
-            for bt in range(fake_imgs_reshape.shape[0]):
-                for it in range(fake_imgs_reshape.shape[1]):
-                    if fake_imgs_reshape[bt][it] >= threshold:
-                        fake_imgs_reshape[bt][it] = 1.0
-                    else:
-                        fake_imgs_reshape[bt][it] = -1.0
-
-            accuracy = 0.0
-            for bt in range(fake_imgs_reshape.shape[0]):
-                over = 0.0
-                less = 0.0
-                base = 0.0
-                for it in range(fake_imgs_reshape.shape[1]):
-                    if real_imgs_reshape[bt][it] == 1.0 and fake_imgs_reshape[bt][it] != 1.0:
-                        over += 1
-                    if real_imgs_reshape[bt][it] != 1.0 and fake_imgs_reshape[bt][it] == -1.0:
-                        less += 1
-                    if real_imgs_reshape[bt][it] != 1.0:
-                        base += 1
-                print("over:{} - under:{} - base:{}".format(over, less, base))
-                accuracy += 1 - ((over + less) / base)
-                print("avg acc:{}".format(1 - ((over + less) / base)))
-            accuracy = accuracy / fake_imgs_reshape.shape[0]
-            print("accuracy:{}".format(accuracy))
-
-            fake_imgs_reshape = np.reshape(fake_imgs_reshape, fake_imgs.shape)
-            real_imgs_reshape = np.reshape(real_imgs_reshape, real_imgs.shape)
-            merged_fake_images = merge(scale_back(fake_imgs_reshape), [source_len, 1])
-            merged_real_images = merge(scale_back(real_imgs_reshape), [source_len, 1])
-            merged_pair = np.concatenate([merged_real_images, merged_fake_images], axis=1)
-
-            batch_buffer.append(merged_pair)
-            count += 1
-        if batch_buffer:
-            # last batch
-            save_imgs(batch_buffer, count, threshold)
 
     def interpolate(self, source_obj, between, model_dir, save_dir, steps):
         tf.global_variables_initializer().run()
@@ -520,8 +494,8 @@ class Font2Font(object):
             op = tf.assign(var, val, validate_shape=False)
             self.sess.run(op)
 
-    def train(self, lr=0.0002, epoch=100, schedule=10, resume=True,
-              freeze_encoder=False, fine_tune=None, sample_steps=50, checkpoint_steps=500):
+    def train(self, lr=0.0002, epoch=100, schedule=10, resume=True, flip_labels=False,
+              freeze_encoder=False, fine_tune=None, sample_steps=50, checkpoint_steps=500, d_iters=5):
         g_vars, d_vars = self.retrieve_trainable_vars(freeze_encoder=freeze_encoder)
         input_handle, loss_handle, _, summary_handle = self.retrieve_handles()
 
@@ -529,11 +503,13 @@ class Font2Font(object):
             raise Exception("no session registered")
 
         learning_rate = tf.placeholder(tf.float32, name="learning_rate")
-        d_optimizer = tf.train.AdamOptimizer(learning_rate, beta1=0.5).minimize(loss_handle.d_loss, var_list=d_vars)
-        g_optimizer = tf.train.AdamOptimizer(learning_rate, beta1=0.5).minimize(loss_handle.g_loss, var_list=g_vars)
+        d_optimizer = tf.train.RMSPropOptimizer(learning_rate).minimize(loss_handle.d_loss, var_list=d_vars)
+        g_optimizer = tf.train.RMSPropOptimizer(learning_rate).minimize(loss_handle.g_loss, var_list=g_vars)
         tf.global_variables_initializer().run()
         real_data = input_handle.real_data
         embedding_ids = input_handle.embedding_ids
+        no_target_data = input_handle.no_target_data
+        no_target_ids = input_handle.no_target_ids
 
         # filter by one type of labels
         data_provider = TrainDataProvider(self.data_dir, filter_by=fine_tune)
@@ -550,8 +526,8 @@ class Font2Font(object):
         current_lr = lr
         counter = 0
         start_time = time.time()
+
         for ei in range(epoch):
-            print("Epoch: {}".format(ei))
             train_batch_iter = data_provider.get_train_iter(self.batch_size)
 
             if (ei + 1) % schedule == 0:
@@ -564,20 +540,28 @@ class Font2Font(object):
             for bid, batch in enumerate(train_batch_iter):
                 counter += 1
                 labels, batch_images = batch
+                shuffled_ids = labels[:]
+                if flip_labels:
+                    np.random.shuffle(shuffled_ids)
                 # Optimize D
-                _, batch_d_loss, d_summary = self.sess.run([d_optimizer, loss_handle.d_loss,
-                                                            summary_handle.d_merged],
-                                                           feed_dict={
-                                                               real_data: batch_images,
-                                                               embedding_ids: labels,
-                                                               learning_rate: current_lr
-                                                           })
+                for _ in range(d_iters):
+                    _, batch_d_loss, d_summary = self.sess.run([d_optimizer, loss_handle.d_loss,
+                                                                summary_handle.d_merged],
+                                                               feed_dict={
+                                                                   real_data: batch_images,
+                                                                   embedding_ids: labels,
+                                                                   learning_rate: current_lr,
+                                                                   no_target_data: batch_images,
+                                                                   no_target_ids: shuffled_ids
+                                                               })
                 # Optimize G
                 _, batch_g_loss = self.sess.run([g_optimizer, loss_handle.g_loss],
                                                 feed_dict={
                                                     real_data: batch_images,
                                                     embedding_ids: labels,
-                                                    learning_rate: current_lr
+                                                    learning_rate: current_lr,
+                                                    no_target_data: batch_images,
+                                                    no_target_ids: shuffled_ids
                                                 })
                 # magic move to Optimize G again
                 # according to https://github.com/carpedm20/DCGAN-tensorflow
@@ -594,7 +578,9 @@ class Font2Font(object):
                                                                         feed_dict={
                                                                             real_data: batch_images,
                                                                             embedding_ids: labels,
-                                                                            learning_rate: current_lr
+                                                                            learning_rate: current_lr,
+                                                                            no_target_data: batch_images,
+                                                                            no_target_ids: shuffled_ids
                                                                         })
                 passed = time.time() - start_time
                 log_format = "Epoch: [%2d], [%4d/%4d] time: %4.4f, d_loss: %.5f, g_loss: %.5f, " + \
@@ -614,3 +600,69 @@ class Font2Font(object):
         # save the last checkpoint
         print("Checkpoint: last checkpoint step %d" % counter)
         self.checkpoint(saver, counter)
+
+    def test(self, source_provider, embedding_ids, model_dir, save_dir):
+        source_len = len(source_provider.data.examples)
+
+        if isinstance(embedding_ids, int) or len(embedding_ids) == 1:
+            embedding_id = embedding_ids if isinstance(embedding_ids, int) else embedding_ids[0]
+            source_iter = source_provider.get_single_embedding_iter(source_len, embedding_id)
+        else:
+            source_iter = source_provider.get_random_embedding_iter(source_len, embedding_ids)
+
+        tf.global_variables_initializer().run()
+        saver = tf.train.Saver(var_list=self.retrieve_generator_vars())
+        self.restore_model(saver, model_dir)
+
+        def save_imgs(imgs, count, threshold):
+            p = os.path.join(save_dir, "inferred_%04d_%.2f.png" % (count, threshold))
+            save_concat_images(imgs, img_path=p)
+            print("generated images saved at %s" % p)
+
+        count = 0
+        threshold = 0.1
+        batch_buffer = list()
+        for labels, source_imgs in source_iter:
+            fake_imgs, real_imgs, d_loss, g_loss, l1_loss = self.generate_fake_samples(source_imgs, labels)
+            img_shape = fake_imgs.shape
+
+            fake_imgs_reshape = np.reshape(np.array(fake_imgs), [img_shape[0], img_shape[1]*img_shape[2]*img_shape[3]])
+            real_imgs_reshape = np.reshape(np.array(real_imgs), [img_shape[0], img_shape[1]*img_shape[2]*img_shape[3]])
+
+            # threshold
+            for bt in range(fake_imgs_reshape.shape[0]):
+                for it in range(fake_imgs_reshape.shape[1]):
+                    if fake_imgs_reshape[bt][it] >= threshold:
+                        fake_imgs_reshape[bt][it] = 1.0
+                    else:
+                        fake_imgs_reshape[bt][it] = -1.0
+
+            accuracy = 0.0
+            for bt in range(fake_imgs_reshape.shape[0]):
+                over = 0.0
+                less = 0.0
+                base = 0.0
+                for it in range(fake_imgs_reshape.shape[1]):
+                    if real_imgs_reshape[bt][it] == 1.0 and fake_imgs_reshape[bt][it] != 1.0:
+                        over += 1
+                    if real_imgs_reshape[bt][it] != 1.0 and fake_imgs_reshape[bt][it] == -1.0:
+                        less += 1
+                    if real_imgs_reshape[bt][it] != 1.0:
+                        base += 1
+                print("over:{} - under:{} - base:{}".format(over, less, base))
+                accuracy += 1 - ((over + less) / base)
+                print("avg acc:{}".format(1 - ((over + less) / base)))
+            accuracy = accuracy / fake_imgs_reshape.shape[0]
+            print("accuracy:{}".format(accuracy))
+
+            fake_imgs_reshape = np.reshape(fake_imgs_reshape, fake_imgs.shape)
+            real_imgs_reshape = np.reshape(real_imgs_reshape, real_imgs.shape)
+            merged_fake_images = merge(scale_back(fake_imgs_reshape), [source_len, 1])
+            merged_real_images = merge(scale_back(real_imgs_reshape), [source_len, 1])
+            merged_pair = np.concatenate([merged_real_images, merged_fake_images], axis=1)
+
+            batch_buffer.append(merged_pair)
+            count += 1
+        if batch_buffer:
+            # last batch
+            save_imgs(batch_buffer, count, threshold)
