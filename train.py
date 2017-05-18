@@ -37,6 +37,8 @@ parser.add_argument('--checkpoint_steps', dest='checkpoint_steps', type=int, def
                     help='number of batches in between two checkpoints')
 parser.add_argument('--clamp', dest='clamp', type=float, default=0.01,
                     help='clamp range for Critic weights [0.01]')
+parser.add_argument('--d_iters', dest='d_iters', type=int, default=5,
+                    help='iteration for discriminator')
 args = parser.parse_args()
 
 
@@ -58,9 +60,9 @@ def main(_):
             ids = args.fine_tune.split(",")
             fine_tune_list = set([int(i) for i in ids])
         print("Begin to train model")
-        model.train(lr=args.lr, epoch=args.epoch, resume=args.resume,
-                    schedule=args.schedule, freeze_encoder=args.freeze_encoder, fine_tune=fine_tune_list,
-                    sample_steps=args.sample_steps, checkpoint_steps=args.checkpoint_steps, clamp=args.clamp)
+        model.train(lr=args.lr, epoch=args.epoch, schedule=args.schedule, resume=args.resume,
+                    freeze_encoder=args.freeze_encoder, fine_tune=fine_tune_list, sample_steps=args.sample_steps,
+                    checkpoint_steps=args.checkpoint_steps, clamp=args.clamp, d_iters=args.d_iters)
         print("Training end!")
 
 if __name__ == '__main__':

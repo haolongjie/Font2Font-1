@@ -220,10 +220,6 @@ class Font2Font(object):
                                              fake_category_loss_summary,
                                              const_loss_summary,
                                              g_loss_summary, tv_loss_summary])
-        # g_merged_summary = tf.summary.merge([cheat_loss_summary, l1_loss_summary,
-        #                                      fake_category_loss_summary,
-        #                                      const_loss_summary,
-        #                                      g_loss_summary, tv_loss_summary])
 
         # expose useful nodes in the graph as handles globally
         input_handle = InputHandle(real_data=real_data,
@@ -518,7 +514,7 @@ class Font2Font(object):
             self.sess.run(op)
 
     def train(self, lr=0.0002, epoch=100, schedule=10, resume=True, freeze_encoder=False, fine_tune=None,
-              sample_steps=50, checkpoint_steps=500, clamp=0.01):
+              sample_steps=50, checkpoint_steps=500, clamp=0.01, d_iters=5):
         g_vars, d_vars = self.retrieve_trainable_vars(freeze_encoder=freeze_encoder)
         input_handle, loss_handle, _, summary_handle = self.retrieve_handles()
 
@@ -533,6 +529,7 @@ class Font2Font(object):
         cap_d_vars_ops = [val.assign(tf.clip_by_value(val, -clamp, clamp)) for val in d_vars]
 
         tf.global_variables_initializer().run()
+
         real_data = input_handle.real_data
         embedding_ids = input_handle.embedding_ids
 
@@ -566,7 +563,7 @@ class Font2Font(object):
                 counter += 1
                 labels, batch_images = batch
                 # Rule 3: Optimize D  -- Train D more.
-                for _ in range(5):
+                for _ in range(d_iters):
                     self.sess.run(cap_d_vars_ops)
 
                     _, batch_d_loss, d_summary = self.sess.run([d_optimizer, loss_handle.d_loss,

@@ -5,7 +5,7 @@ from __future__ import absolute_import
 import tensorflow as tf
 import os
 import argparse
-from model.font2font import Font2Font
+from model.font2font_cgan import Font2Font
 from model.utils import compile_frames_to_gif
 
 """

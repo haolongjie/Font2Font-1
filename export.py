@@ -4,7 +4,7 @@ from __future__ import absolute_import
 
 import tensorflow as tf
 import argparse
-from model.font2font import Font2Font
+from model.font2font_cgan import Font2Font
 
 parser = argparse.ArgumentParser(description='Export generator weights from the checkpoint file')
 parser.add_argument('--model_dir', dest='model_dir', required=True,
