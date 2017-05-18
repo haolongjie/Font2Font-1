@@ -98,10 +98,11 @@ class TrainDataProvider(object):
         val_examples = self.val.examples[:]
         if shuffle:
             np.random.shuffle(val_examples)
-        while True:
-            val_batch_iter = get_batch_iter(val_examples, batch_size, augment=False)
-            for labels, examples in val_batch_iter:
-                yield labels, examples
+        return get_batch_iter(val_examples, batch_size, augment=False)
+        # while True:
+        #     val_batch_iter = get_batch_iter(val_examples, batch_size, augment=False)
+        #     for labels, examples in val_batch_iter:
+        #         yield labels, examples
 
     def compute_total_batch_num(self, batch_size):
         """Total padded batch num"""
@@ -128,3 +129,16 @@ class InjectDataProvider(object):
             # inject specific embedding style here
             labels = [random.choice(embedding_ids) for i in range(batch_size)]
             yield labels, images
+
+
+class NeverEndingLoopingProvider(InjectDataProvider):
+    def __init__(self, obj_path):
+        super(NeverEndingLoopingProvider, self).__init__(obj_path)
+
+    def get_random_embedding_iter(self, batch_size, embedding_ids):
+        while True:
+            # np.random.shuffle(self.data.examples)
+            rand_iter = super(NeverEndingLoopingProvider, self) \
+                .get_random_embedding_iter(batch_size, embedding_ids)
+            for labels, images in rand_iter:
+                yield labels, images
