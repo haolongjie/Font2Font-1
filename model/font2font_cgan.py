@@ -397,9 +397,7 @@ class Font2Font(object):
                     less += 1
                 if real_imgs_reshape[bt][it] != 1.0:
                     base += 1
-            print("over:{} - under:{} - base:{}".format(over, less, base))
             accuracy += 1 - ((over + less) / base)
-            print("avg acc:{}".format(1 - ((over + less) / base)))
         accuracy = accuracy / fake_imgs_reshape.shape[0]
         print("accuracy:{}".format(accuracy))
 
