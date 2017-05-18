@@ -62,7 +62,7 @@ def main(_):
         print("Begin to train model")
         model.train(lr=args.lr, epoch=args.epoch, schedule=args.schedule, resume=args.resume,
                     freeze_encoder=args.freeze_encoder, fine_tune=fine_tune_list, sample_steps=args.sample_steps,
-                    checkpoint_steps=args.checkpoint_steps, clamp=args.clamp, d_iters=args.d_iters)
+                    checkpoint_steps=args.checkpoint_steps, d_iters=args.d_iters)
         print("Training end!")
 
 if __name__ == '__main__':
