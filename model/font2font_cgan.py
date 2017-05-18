@@ -366,10 +366,6 @@ class Font2Font(object):
     def validate_model(self, val_iter, epoch, step):
         labels, images = next(val_iter)
 
-        # 10 items
-        labels = labels[0:10]
-        images = images[0:10,:,:,:]
-
         fake_imgs, real_imgs, d_loss, g_loss, l1_loss = self.generate_fake_samples(images, labels)
         print("Sample: d_loss: %.5f, g_loss: %.5f, l1_loss: %.5f" % (d_loss, g_loss, l1_loss))
 
@@ -378,8 +374,10 @@ class Font2Font(object):
         fake_imgs_reshape = fake_imgs
         real_imgs_reshape = real_imgs
 
-        fake_imgs_reshape = np.reshape(np.array(fake_imgs_reshape), [img_shape[0], img_shape[1] * img_shape[2] * img_shape[3]])
-        real_imgs_reshape = np.reshape(np.array(real_imgs_reshape), [img_shape[0], img_shape[1] * img_shape[2] * img_shape[3]])
+        fake_imgs_reshape = np.reshape(np.array(fake_imgs_reshape),
+                                       [img_shape[0], img_shape[1] * img_shape[2] * img_shape[3]])
+        real_imgs_reshape = np.reshape(np.array(real_imgs_reshape),
+                                       [img_shape[0], img_shape[1] * img_shape[2] * img_shape[3]])
 
         # threshold
         for bt in range(fake_imgs_reshape.shape[0]):
